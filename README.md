@@ -17,8 +17,8 @@ This pipeline performs end-to-end analysis from FASTQ files to annotated variant
 ## Quick Start
 ```bash
 # 1. Clone repository
-git clone https://github.com/yourusername/mito-variant-pipeline.git
-cd mito-variant-pipeline
+git clone https://github.com/chicopollo/iisage-mity-pipeline.git
+cd iisage-mity-pipeline
 
 # 2. Setup (downloads Picard, checks dependencies)
 bash setup.sh
@@ -26,7 +26,7 @@ bash setup.sh
 # 3. Organize your data (see Directory Structure below)
 
 # 4. Run pipeline
-./run_mito_pipeline.sh
+./run_mity_pipeline.sh
 ```
 
 ## Requirements
@@ -65,7 +65,7 @@ bash check_dependencies.sh
 ### Input Structure
 ```
 mito-variant-pipeline/
-├── run_mito_pipeline.sh
+├── run_mity_pipeline.sh
 ├── config/
 │   └── pipeline.conf
 ├── scripts/
@@ -109,37 +109,37 @@ Species_name/
 ### Run Entire Pipeline
 ```bash
 # All species, all steps
-./run_mito_pipeline.sh
+./run_mity_pipeline.sh
 
 # Specific species
-./run_mito_pipeline.sh --species Chrysemys_picta
+./run_mity_pipeline.sh --species Chrysemys_picta
 
 # Multiple species
-./run_mito_pipeline.sh Chrysemys_picta Desmodus_rotundus
+./run_mity_pipeline.sh Chrysemys_picta Desmodus_rotundus
 ```
 
 ### Run Specific Steps
 ```bash
 # Only alignment (step 1)
-./run_mito_pipeline.sh --step 1
+./run_mity_pipeline.sh --step 1
 
 # Only variant calling (step 4)
-./run_mito_pipeline.sh --step 4
+./run_mity_pipeline.sh --step 4
 
 # Steps 3-4 (annotation prep and variant calling)
-./run_mito_pipeline.sh --from-step 3
+./run_mity_pipeline.sh --from-step 3
 ```
 
 ### Other Options
 ```bash
 # List available species
-./run_mito_pipeline.sh --list
+./run_mity_pipeline.sh --list
 
 # Force re-run (skip completion checks)
-./run_mito_pipeline.sh --force
+./run_mity_pipeline.sh --force
 
 # Show help
-./run_mito_pipeline.sh --help
+./run_mity_pipeline.sh --help
 ```
 
 ## Configuration
@@ -208,7 +208,7 @@ RG_PLATFORM="illumina"
 **1. "No species directories found"**
 ```bash
 # Check directory structure
-./run_mito_pipeline.sh --list
+./run_mity_pipeline.sh --list
 
 # Ensure directory naming: Species_name/ref_mito_*/
 ```
@@ -244,13 +244,13 @@ docker pull drmjc/mity:2.0.0
 The pipeline automatically detects completed steps:
 ```bash
 # Will skip completed steps for each species
-./run_mito_pipeline.sh
+./run_mity_pipeline.sh
 ```
 
 ### Custom Configuration
 ```bash
 # Use custom config file
-CONFIG_FILE=/path/to/custom.conf ./run_mito_pipeline.sh
+CONFIG_FILE=/path/to/custom.conf ./run_mity_pipeline.sh
 ```
 
 ### Manual Step Execution
@@ -281,7 +281,7 @@ Contributions welcome! Please:
 
 ## Support
 
-- **Issues**: https://github.com/chicopllo/mito-variant-pipeline/issues
+- **Issues**: https://github.com/chicopllo/iisage-mity-pipeline/issues
 - **Contact**: decenalo@msu.edu
 - **Lab**: Bronikowski Lab, IISAGE
 
@@ -292,7 +292,11 @@ MIT License - see [LICENSE](LICENSE) file
 ## Authors
 
 **L. Paul Decena-Segarra** 
-Bronikowski Lab 
+
+**Eric Randolph**
+
+Bronikowski Lab - 2025
+
 Michigan State University - IISAGE
 
 ## Acknowledgments
