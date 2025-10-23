@@ -1,8 +1,7 @@
 # Mitochondrial Variant Calling Pipeline
 
 Automated mitochondrial genome variant calling pipeline for non-model species using BWA, MITY, FreeBayes, and custom annotations.
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 
 ## Overview
 
@@ -287,7 +286,7 @@ Contributions welcome! Please:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file
+This project is licensed under the Creative Commons Attribution 4.0 International License - see the [LICENSE](LICENSE) file for details
 
 ## Authors
 
