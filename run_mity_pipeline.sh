@@ -3,9 +3,9 @@
 # run_mito_pipeline.sh - Master Pipeline Orchestrator
 # ---------------------------------------------------------------
 # Mitochondrial variant calling pipeline for non-model species
-# Author: Paul Ten (Bronikowski Lab, IISAGE)
-# Version: 1.1 (2025-10)
-# Changed detect_species function
+# Author: Paul Decena (Bronikowski Lab, IISAGE)
+# Version: 1.2 (2025-11)
+# Changed correct reporting
 # ===============================================================
 
 set -euo pipefail
@@ -84,7 +84,7 @@ detect_species() {
     [[ "$dir" == "config" ]] && continue
     [[ "$dir" == "tools" ]] && continue
     [[ "$dir" == "."* ]] && continue
-    
+
     # Check if it has ref_mito* subdirectory
     if ls -d "$dir"/ref_mito*/ >/dev/null 2>&1; then
       echo "$dir"
@@ -112,7 +112,7 @@ list_species() {
 check_completed() {
   local species=$1
   local step=$2
-  
+
   case $step in
     1) # BWA alignment
       [[ -n "$(find "$species" -maxdepth 1 -name "*.sorted.bam" 2>/dev/null)" ]]
@@ -136,30 +136,52 @@ check_completed() {
 run_step1_alignment() {
   local species=$1
   log "Step 1: BWA Alignment - $species"
-  
+
   if [[ $SKIP_COMPLETED == "true" ]] && check_completed "$species" 1; then
     log "  ✓ Alignment already completed, skipping"
     return 0
   fi
-  
-  bash "$SCRIPT_DIR/scripts/01_bwa_align.sh" "$species" 2>&1 | tee -a "$LOG_DIR/${species}_step1.log"
+
+  if ! bash "$SCRIPT_DIR/scripts/01_bwa_align.sh" "$species" 2>&1 | tee -a "$LOG_DIR/${species}_step1.log"; then
+    log "ERROR: Step 1 failed for $species"
+    return 1
+  fi
+
+  # Verify output
+  if ! check_completed "$species" 1; then
+    log "ERROR: Step 1 completed but no BAMs found for $species"
+    return 1
+  fi
+
+  return 0
 }
 
 run_step2_readgroups() {
   local species=$1
   log "Step 2: Add Read Groups - $species"
-  
+
   if [[ $SKIP_COMPLETED == "true" ]] && check_completed "$species" 2; then
     log "  ✓ Read groups already added, skipping"
     return 0
   fi
-  
-  bash "$SCRIPT_DIR/scripts/02_add_readgroups.sh" "$species" 2>&1 | tee -a "$LOG_DIR/${species}_step2.log"
+
+  if ! bash "$SCRIPT_DIR/scripts/02_add_readgroups.sh" "$species" 2>&1 | tee -a "$LOG_DIR/${species}_step2.log"; then
+    log "ERROR: Step 2 failed for $species"
+    return 1
+  fi
+
+  # Verify output
+  if ! check_completed "$species" 2; then
+    log "ERROR: Step 2 completed but no RG BAMs found for $species"
+    return 1
+  fi
+
+  return 0
 }
 
 run_step3_gff3() {
   log "Step 3: Convert GenBank to GFF3"
-  
+
   # This runs on all species at once
   if [[ $SKIP_COMPLETED == "true" ]]; then
     local all_done=true
@@ -169,56 +191,75 @@ run_step3_gff3() {
         break
       fi
     done < <(detect_species)
-    
+
     if [[ $all_done == "true" ]]; then
       log "  ✓ All GFF3 files already exist, skipping"
       return 0
     fi
   fi
-  
-  bash "$SCRIPT_DIR/scripts/03_genbank_to_gff3.sh" 2>&1 | tee -a "$LOG_DIR/step3_gff3.log"
+
+  # Don't fail if GFF3 conversion has issues
+  bash "$SCRIPT_DIR/scripts/03_genbank_to_gff3.sh" 2>&1 | tee -a "$LOG_DIR/step3_gff3.log" || {
+    log "WARNING: Step 3 (GFF3 conversion) had errors but continuing..."
+    return 0
+  }
+
+  return 0
 }
 
 run_step4_mity() {
   local species=$1
   log "Step 4: MITY Variant Calling - $species"
-  
+
   if [[ $SKIP_COMPLETED == "true" ]] && check_completed "$species" 4; then
     log "  ✓ MITY analysis already completed, skipping"
     return 0
   fi
-  
-  cd "$species"
-  bash "$SCRIPT_DIR/scripts/04_mity_pipeline.sh" 2>&1 | tee -a "$LOG_DIR/${species}_step4.log"
-  cd ..
-}
 
+  if [[ $SKIP_COMPLETED == "false" ]]; then
+    log "  Cleaning intermediate files (--force mode)..."
+    rm -rf "$species/mity_chunked"
+    rm -rf "$species/mity_output"
+    mkdir -p "$species/mity_chunked"
+    mkdir -p "$species/mity_output"
+  fi
+
+  cd "$species"
+  if ! bash "$SCRIPT_DIR/scripts/04_mity_pipeline.sh" 2>&1 | tee -a "$LOG_DIR/${species}_step4.log"; then
+    cd ..
+    log "ERROR: Step 4 failed for $species"
+    return 1
+  fi
+  cd ..
+
+  # Verify output
+  if ! check_completed "$species" 4; then
+    log "ERROR: Step 4 completed but no report found for $species"
+    return 1
+  fi
+
+  return 0
+}
 # ---- Main Pipeline ----
 run_pipeline() {
   local species=$1
   local start_step=${2:-1}
   local end_step=${3:-4}
-  
+
   log "=========================================="
   log "Running pipeline for: $species"
   log "Steps: $start_step to $end_step"
   log "=========================================="
-  
+
   for step in $(seq $start_step $end_step); do
     case $step in
       1) run_step1_alignment "$species" ;;
       2) run_step2_readgroups "$species" ;;
-      3) 
-        # Only run once for all species
-        if [[ $step -eq $start_step ]] || [[ ! -f "$LOG_DIR/.gff3_done" ]]; then
-          run_step3_gff3
-          touch "$LOG_DIR/.gff3_done"
-        fi
-        ;;
+      3) ;; # Step 3 runs before species loop
       4) run_step4_mity "$species" ;;
     esac
   done
-  
+
   log "✅ Pipeline completed for $species"
 }
 
@@ -297,8 +338,18 @@ fi
 FAILED=()
 SUCCESSFUL=()
 
-# Clean GFF3 marker for this run
-rm -f "$LOG_DIR/.gff3_done"
+# Run Step 3 (GFF3 conversion) ONCE for all species BEFORE the loop
+
+if [[ $START_STEP -le 3 ]] && [[ $END_STEP -ge 3 ]]; then
+  log "=========================================="
+  log "Step 3: Convert GenBank to GFF3 (all species)"
+  log "=========================================="
+
+  if ! bash "$SCRIPT_DIR/scripts/03_genbank_to_gff3.sh" 2>&1 | tee -a "$LOG_DIR/step3_gff3.log"; then
+    log "WARNING: Step 3 (GFF3 conversion) had errors but continuing..."
+  fi
+  echo
+fi
 
 for species in "${SPECIES_LIST[@]}"; do
   if [[ ! -d "$species" ]]; then
@@ -306,7 +357,7 @@ for species in "${SPECIES_LIST[@]}"; do
     FAILED+=("$species")
     continue
   fi
-  
+
   if run_pipeline "$species" "$START_STEP" "$END_STEP"; then
     SUCCESSFUL+=("$species")
   else

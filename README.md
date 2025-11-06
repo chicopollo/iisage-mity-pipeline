@@ -2,8 +2,12 @@
 
 Automated mitochondrial genome variant calling pipeline for non-model species using BWA, MITY, FreeBayes, and custom annotations.
 
+
 [![License: CC BY 4.0](https://img.shields.io/badge/License-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
 
+## NOTE
+I have included a figure and statistical test generation R script which hasn't been incorporated into the pipeline logic, will do soon. 
+-Paul 
 ## Overview
 
 This pipeline performs end-to-end analysis from FASTQ files to annotated variant reports:

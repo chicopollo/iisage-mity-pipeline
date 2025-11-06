@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/config/pipeline.conf"
 
 # ===============================================================
-# mity2_species_runall_v7.1.sh
+# mity2_species_runall_v7.2.sh
 # ---------------------------------------------------------------
 # Universal MITY runner for non-model species.
 # Pipeline:
@@ -19,8 +19,8 @@ source "$SCRIPT_DIR/config/pipeline.conf"
 #   8. Extract CSV from XLSX using ssconvert
 #   9. Post-process CSV to add gene annotations from INFO field
 # ---------------------------------------------------------------
-# Author: Paul Ten (Bronikowski Lab, IISAGE)
-# Version: 7.1 (2025-10)
+# Author: Paul Decena (Bronikowski Lab, IISAGE)
+# Version: 7.2 (2025-11)
 # ===============================================================
 
 set -euo pipefail
@@ -37,7 +37,7 @@ MIN_MQ="${MIN_MQ:-$MITY_MIN_MQ}"  # From config
 MIN_BQ="${MIN_BQ:-$MITY_MIN_BQ}"  # From config
 # -------------------------------------------------
 
-echo "==> MITY species pipeline (v7.1)"
+echo "==> IISAGE-MITY species pipeline (v7.2)"
 echo "Image:   $DOCKER_IMAGE"
 echo "Window:  ${WSIZE}bp   CovCap: ${LIMIT_COV}   MQ: ${MIN_MQ}   BQ: ${MIN_BQ}"
 echo
@@ -129,9 +129,9 @@ while read -r REG; do
     " || { echo "   WARN: FreeBayes failed @ $REG — skipping"; continue; }
   fi
 
-  # B) Sanitize FORMAT fields
+# B) Ensure/add GT/DP/AD/RO/AO
   if [[ ! -s "$PATCH" ]]; then
-    echo "   ensure/add GT/DP/AD/RO/AO (sanitize NoneType) ..."
+    echo "   ensure/add GT/DP/AD/RO/AO ..."
     zcat "$RAW" | awk -v OFS='\t' '
       BEGIN{FS="\t"; haveGT=haveDP=haveAD=haveRO=haveAO=0}
       /^##FORMAT=<ID=GT,/ {haveGT=1}
@@ -151,25 +151,53 @@ while read -r REG; do
       /^##/ {print; next}
 
       {
-        if(NF < 10) {print; next}
+        altN = ($5=="." ? 0 : split($5,al,",")); if(altN<1) altN=1
 
-        n = split($9,F,":"); idxRO=idxDP=idxAO=0
+        n = split($9,F,":"); idxGT=idxDP=idxAD=idxRO=idxAO=0
         for(i=1;i<=n;i++){
-          if(F[i]=="RO") idxRO=i
-          else if(F[i]=="DP") idxDP=i
-          else if(F[i]=="AO") idxAO=i
+          if(F[i]=="GT") idxGT=i; else if(F[i]=="DP") idxDP=i; else if(F[i]=="AD") idxAD=i;
+          else if(F[i]=="RO") idxRO=i; else if(F[i]=="AO") idxAO=i;
         }
+        if(!idxGT){F[++n]="GT"; idxGT=n}
+        if(!idxDP){F[++n]="DP"; idxDP=n}
+        if(!idxAD){F[++n]="AD"; idxAD=n}
+        if(!idxRO){F[++n]="RO"; idxRO=n}
+        if(!idxAO){F[++n]="AO"; idxAO=n}
+
+        fmt=F[1]; for(i=2;i<=n;i++) fmt=fmt":"F[i]; $9=fmt
 
         for(c=10;c<=NF;c++){
-          m=split($c,f,":")
-          if(m<n){ for(j=m+1;j<=n;j++) f[j]="." }
-          if(idxRO && (f[idxRO]==""||f[idxRO]=="."||f[idxRO]=="None")) f[idxRO]=0
-          if(idxDP && (f[idxDP]==""||f[idxDP]=="."||f[idxDP]=="None")) f[idxDP]=0
-          if(idxAO && (f[idxAO]==""||f[idxAO]=="."||f[idxAO]=="None")) f[idxAO]="0"
-          s=f[1]; for(j=2;j<=n;j++) s=s":"f[j]; $c=s
+          m=split($c,f,":"); for(k=m+1;k<=n;k++) f[k]=""
+          # AD
+          adN=split(f[idxAD],ad,","); for(t=1;t<=adN;t++){ if(ad[t]==""||ad[t]==".") ad[t]=0; ad[t]+=0 }
+          ro=0; if(adN>=1) ro=ad[1]+0; else if(f[idxRO]!=""&&f[idxRO]!=".") ro=f[idxRO]+0
+          split("",ao); aoN=0
+          if(adN>=2){
+            for(t=1;t<=altN;t++) ao[t]=((t+1)<=adN ? ad[t+1]+0 : 0); aoN=altN
+          } else {
+            aoN=split(f[idxAO],ao,",")
+            for(t=1;t<=altN;t++){ if(t>aoN||ao[t]==""||ao[t]==".") ao[t]=0; else ao[t]+=0 }
+            aoN=altN
+          }
+          # sanitize AD vector to 1+altN
+          if(adN < (1+altN)){
+            adstr=ro; for(t=1;t<=altN;t++) adstr=adstr","ao[t]
+          } else {
+            adstr=ad[1]; for(t=1;t<=altN;t++) adstr=adstr","((t+1)<=adN?ad[t+1]:0)
+          }
+          # DP = sum(AD)
+          dp=ro; for(t=1;t<=altN;t++) dp+=ao[t]
+          # GT default
+          gt=f[idxGT]; if(gt==""||gt==".") gt="0/0"
+          # AO string
+          aostr=ao[1]; for(t=2;t<=altN;t++) aostr=aostr","ao[t]
+
+          f[idxGT]=gt; f[idxAD]=adstr; f[idxRO]=ro; f[idxAO]=aostr; f[idxDP]=dp
+          s=f[1]; for(k=2;k<=n;k++) s=s":"f[k]; $c=s
         }
         print
-      }' | bgzip -c > "$PATCH"
+      }
+    ' | bgzip -c > "$PATCH"
     tabix -f -p vcf "$PATCH"
   fi
 
@@ -206,147 +234,116 @@ zcat "$MERGED" | awk -v OFS='\t' '
   { print }' | bgzip -c > "$FINAL"
 tabix -f "$FINAL"
 
-# ---- Convert GFF3 to BED for vcfanno ----
+# ---- Convert GFF3 to BED and fix contig name ----
 GFF3=$(find "$(dirname "$REF")" -maxdepth 1 -type f -name "*.gff3.gz" | head -n1 || true)
 
 if [[ -n "$GFF3" ]]; then
   BED="$(dirname "$REF")/$(basename "${GFF3%.gff3.gz}").bed"
-  
-  # Force regeneration if GFF3 is newer
+
   if [[ "$GFF3" -nt "${BED}.gz" ]] || [[ ! -s "${BED}.gz" ]]; then
-    echo "==> Converting GFF3 to BED for vcfanno..."
-    zcat "$GFF3" | awk -F'\t' '
-      BEGIN {
-        OFS = "\t"
-      }
-      
-      # Skip comments, source, and gene features (gene features typically lack useful annotations)
+    echo "==> Converting GFF3 to BED (using VCF contig: $CONTIG)..."
+
+    zcat "$GFF3" | awk -v contig="$CONTIG" -F'\t' '
+      BEGIN { OFS = "\t" }
       !/^#/ && $3 != "source" && $3 != "gene" {
-        gene = ""
-        product = ""
-        name = ""
-        id = ""
-        
-        # Parse attributes
+        gene = ""; product = ""; name = ""; id = ""
+
         n = split($9, attrs, ";")
         for (i = 1; i <= n; i++) {
           attr = attrs[i]
           gsub(/^ +| +$/, "", attr)
-          
-          if (attr ~ /^gene=/) {
-            gsub(/^gene=/, "", attr)
-            gene = attr
-          }
-          else if (attr ~ /^Name=/) {
-            gsub(/^Name=/, "", attr)
-            name = attr
-          }
-          else if (attr ~ /^product=/) {
-            gsub(/^product=/, "", attr)
-            product = attr
-          }
-          else if (attr ~ /^ID=/) {
-            gsub(/^ID=/, "", attr)
-            id = attr
-          }
+          if (attr ~ /^gene=/) { gsub(/^gene=/, "", attr); gene = attr }
+          else if (attr ~ /^Name=/) { gsub(/^Name=/, "", attr); name = attr }
+          else if (attr ~ /^product=/) { gsub(/^product=/, "", attr); product = attr }
+          else if (attr ~ /^ID=/) { gsub(/^ID=/, "", attr); id = attr }
         }
-        
-        # Prioritize: gene > Name > ID > feature_type
-        gene_name = gene
-        if (gene_name == "") gene_name = name
-        if (gene_name == "") gene_name = id
-        if (gene_name == "") gene_name = $3
-        
-        # Use product if available, otherwise feature type
+
+        gene_name = (gene != "" ? gene : (name != "" ? name : (id != "" ? id : $3)))
         if (product == "") product = $3
-        
-        # BED format: chr, start(0-based), end, name, score, strand, gene, product
-        print $1, $4-1, $5, gene_name, ".", $7, gene_name, product
+
+        # Use VCF contig name!
+        print contig, $4-1, $5, gene_name, ".", $7, gene_name, product
       }
     ' | sort -k1,1 -k2,2n | bgzip -c > "${BED}.gz"
-    
+
     tabix -p bed "${BED}.gz"
-    echo "   Created: ${BED}.gz"
-    
-    # Show statistics
-    FEAT_COUNT=$(zcat "${BED}.gz" | wc -l)
-    echo "   Features: $FEAT_COUNT"
-    echo "   Sample annotations:"
-    zcat "${BED}.gz" | head -5 | awk '{printf "     %s:%d-%d  %s (%s)\n", $1, $2, $3, $7, $8}'
-  else
-    echo "==> BED annotation exists: ${BED}.gz"
+    echo "   ✓ Created: ${BED}.gz (contig: $CONTIG)"
   fi
 fi
 
-# ---- Annotation-aware report ----
-echo
-echo "==> Generating mity report ..."
+# ---- Annotate VCF with vcfanno (on host) ----
+ANNOTATED_VCF="$FINAL"
 
-if [[ -n "$GFF3" ]] && [[ -s "${BED}.gz" ]]; then
-  echo "Using BED annotation: ${BED}.gz"
-  
-  # Create TOML config for vcfanno
+if [[ -n "$GFF3" ]] && [[ -s "${BED}.gz" ]] && command -v vcfanno >/dev/null 2>&1; then
+  echo "==> Annotating VCF with gene information..."
+
   TOML="${BED%.bed}_vcfanno.toml"
   cat > "$TOML" <<EOF
 [[annotation]]
-file = "/data/${BED#./}.gz"
+file = "${BED}.gz"
 columns = [7, 8]
 names = ["gene", "product"]
 ops = ["uniq", "uniq"]
 EOF
-  
-  echo "TOML config: $TOML"
-  
-  # Run mity report with annotations
-  $DOCKER_RUN -v "$PWD":/data -w /data "$DOCKER_IMAGE" report \
-    --prefix "${PREFIX}_all" \
-    --vcfanno-base-path "/data" \
-    --custom-vcfanno-config "/data/${TOML#./}" \
-    --output-dir "/data/$REPORT_DIR" \
-    "/data/${FINAL#./}" || {
-      echo "⚠️  Report with annotations failed, trying without..."
-      $DOCKER_RUN -v "$PWD":/data -w /data "$DOCKER_IMAGE" report \
-        --prefix "${PREFIX}_all" \
-        --output-dir "/data/$REPORT_DIR" \
-        "/data/${FINAL#./}"
-    }
+
+  ANNOTATED_VCF="$OUT/${PREFIX}.normalise.annotated.vcf.gz"
+
+  # Run vcfanno on host (not in Docker)
+  vcfanno "$TOML" "$FINAL" 2>/dev/null | bgzip -c > "$ANNOTATED_VCF"
+  tabix -f "$ANNOTATED_VCF"
+
+  # Verify
+  ANN_COUNT=$(zcat "$ANNOTATED_VCF" | grep -v "^#" | grep -c "gene=" || echo 0)
+  TOTAL=$(zcat "$ANNOTATED_VCF" | grep -v "^#" | wc -l)
+  echo "   ✓ Annotated: $ANN_COUNT / $TOTAL variants"
+
+  if [[ $ANN_COUNT -eq 0 ]]; then
+    echo "   ⚠️  WARNING: No variants were annotated - using unannotated VCF"
+    ANNOTATED_VCF="$FINAL"
+  fi
 else
-  echo "⚠️  No valid annotation; running report without annotations."
-  $DOCKER_RUN -v "$PWD":/data -w /data "$DOCKER_IMAGE" report \
-    --prefix "${PREFIX}_all" \
-    --output-dir "/data/$REPORT_DIR" \
-    "/data/${FINAL#./}"
+  if [[ -z "$GFF3" ]]; then
+    echo "==> No GFF3 annotation available"
+  elif ! command -v vcfanno >/dev/null 2>&1; then
+    echo "==> vcfanno not installed - skipping annotation"
+    echo "   Install: sudo apt-get install vcfanno"
+  fi
 fi
 
-# ---- Extract CSV from XLSX and add annotations ----
+# ---- Generate MITY report ----
 echo
-echo "==> Extracting CSV from XLSX reports..."
+echo "==> Generating MITY report..."
 
-# Check if ssconvert is available
+$DOCKER_RUN -v "$PWD":/data -w /data "$DOCKER_IMAGE" report \
+  --prefix "${PREFIX}_all" \
+  --output-dir "/data/$REPORT_DIR" \
+  "/data/${ANNOTATED_VCF#./}"
+
+# ---- Extract CSV from XLSX and populate gene columns ----
+echo
+echo "==> Extracting CSV from XLSX and adding gene annotations..."
+
 if ! command -v ssconvert >/dev/null 2>&1; then
   echo "WARNING: ssconvert not found. Install with: sudo apt-get install gnumeric"
-  echo "Skipping CSV extraction and annotation."
+  echo "Skipping CSV extraction."
 else
   for xlsx_report in "$REPORT_DIR"/*.mity.report.xlsx; do
     [[ -f "$xlsx_report" ]] || continue
-    
+
     csv_report="${xlsx_report%.xlsx}.csv"
-    annotated_csv="${xlsx_report%.xlsx}_annotated.csv"
-    
+
     echo "   Converting: $(basename "$xlsx_report")"
-    
-    # Convert XLSX to CSV
     ssconvert "$xlsx_report" "$csv_report" 2>/dev/null
-    
+
     if [[ ! -f "$csv_report" ]]; then
       echo "   ERROR: Failed to extract CSV"
       continue
     fi
-    
-    echo "   Annotating: $(basename "$csv_report")"
-    
-    # Add annotations from INFO field
-    awk -F',' 'BEGIN {OFS=","}
+
+    # Extract gene annotations from INFO field to GENE/LOCUS columns
+    echo "   Populating gene columns from INFO field..."
+
+    awk -F',' 'BEGIN{OFS=","}
       NR==1 {
         print
         next
@@ -355,34 +352,41 @@ else
         info = $(NF-1)
         gene = "."
         product = "."
-        
+
+        # Extract gene
         if (info ~ /gene=/) {
           tmp = info
           sub(/.*gene=/, "", tmp)
-          sub(/;.*/, "", tmp)
+          sub(/[;,].*/, "", tmp)
           gene = tmp
         }
-        
+
+        # Extract product
         if (info ~ /product=/) {
           tmp = info
           sub(/.*product=/, "", tmp)
-          sub(/;.*/, "", tmp)
+          sub(/[;,].*/, "", tmp)
           product = tmp
         }
-        
+
         $3 = gene
         $4 = product
-        
         print
       }
-    ' "$csv_report" > "$annotated_csv"
-    
-    echo "   Created: $(basename "$annotated_csv")"
-    
-    ANNOTATED_COUNT=$(awk -F',' 'NR>1 && $3!="." && $3!=""' "$annotated_csv" | wc -l)
-    TOTAL_COUNT=$(awk 'NR>1' "$annotated_csv" | wc -l)
-    echo "   Annotated: $ANNOTATED_COUNT / $TOTAL_COUNT variants"
-    
+    ' "$csv_report" > "${csv_report}.tmp"
+
+    mv "${csv_report}.tmp" "$csv_report"
+
+    # Count annotated variants
+    ANNOTATED=$(awk -F',' 'NR>1 && $3!="." && $3!=""' "$csv_report" | wc -l)
+    TOTAL=$(awk 'NR>1' "$csv_report" | wc -l)
+    echo "   ✓ Populated gene info: $ANNOTATED / $TOTAL variants"
+  done
+fi
+    # Count annotated variants
+    ANNOTATED=$(awk -F',' 'NR>1 && $3!="." && $3!=""' "$csv_report" | wc -l)
+    TOTAL=$(awk 'NR>1' "$csv_report" | wc -l)
+    echo "   ✓ Populated gene info: $ANNOTATED / $TOTAL variants"
   done
 fi
 
@@ -393,13 +397,14 @@ echo " - Merged VCF    : $MERGED"
 echo " - VAF0 VCF      : $FINAL"
 echo " - Report (xlsx) : $REPORT_DIR/${PREFIX}_all.mity.report.xlsx"
 if command -v ssconvert >/dev/null 2>&1; then
-  echo " - Annotated CSV : $REPORT_DIR/${PREFIX}_all.mity.report_annotated.csv"
+  echo " - Annotated CSV : $REPORT_DIR/${PREFIX}_all.mity.report.csv"
 fi
 echo
 
 # ---- Variant Summary ----
+
 echo "==> Variant Summary:"
-TOTAL_VARS=$(zcat "$FINAL" | grep -v "^#" | wc -l)
+TOTAL_VARS=$(zcat "$FINAL" | grep -v "^#" | wc -l || echo 0)
 echo "Total variants: $TOTAL_VARS"
 
 if [[ $TOTAL_VARS -gt 0 ]]; then
@@ -407,24 +412,20 @@ if [[ $TOTAL_VARS -gt 0 ]]; then
   echo "First 5 variants:"
   echo "CHROM           POS    REF  ALT"
   echo "--------------------------------------"
-  zcat "$FINAL" | grep -v "^#" | head -5 | awk '{printf "%-15s %-6s %-4s %s\n", $1, $2, $4, $5}'
-  
-  # Show sample from annotated CSV
-  annotated_csv="$REPORT_DIR/${PREFIX}_all.mity.report_annotated.csv"
-  if [[ -f "$annotated_csv" ]]; then
+  zcat "$FINAL" | grep -v "^#" | head -5 | awk '{printf "%-15s %-6s %-4s %s\n", $1, $2, $4, $5}' || true
+
+  # Show CSV if exists
+  csv_report="$REPORT_DIR/${PREFIX}_all.mity.report.csv"
+  if [[ -f "$csv_report" ]]; then
     echo
-    echo "Sample annotations from CSV (first 3 variants):"
-    echo "SAMPLE                         HGVS       GENE       PRODUCT"
-    echo "------------------------------------------------------------------------"
-    awk -F',' 'NR>1 && NR<=4 {printf "%-30s %-10s %-10s %s\n", substr($1,1,30), substr($2,1,10), substr($3,1,10), substr($4,1,40)}' \
-      "$annotated_csv"
+    echo "Sample from CSV report (first 3 variants):"
+    head -4 "$csv_report" | tail -3 | cut -d',' -f1-5 | column -t -s','
   fi
 fi
 
 echo
 echo "Pipeline complete! ✅"
+echo "Check report: $REPORT_DIR/${PREFIX}_all.mity.report.xlsx"
 if command -v ssconvert >/dev/null 2>&1; then
-  echo "Check annotated CSV for gene names and products: $REPORT_DIR/${PREFIX}_all.mity.report_annotated.csv"
-else
-  echo "Install ssconvert (gnumeric) to enable CSV extraction and annotation."
+  echo "CSV version: $REPORT_DIR/${PREFIX}_all.mity.report.csv"
 fi
