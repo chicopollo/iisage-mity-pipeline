@@ -205,6 +205,92 @@ RG_PLATFORM="illumina"
 - Gene annotation using vcfanno
 - Generates Excel and annotated CSV reports
 
+## Downstream Analysis
+
+After running the pipeline, two R scripts are provided for comprehensive statistical analysis and visualization of heteroplasmy data:
+
+### mity_analysis.R
+
+Performs comprehensive mitochondrial heteroplasmy analysis with two complementary approaches:
+
+**Part 1: Sample-Level Analysis** (from CSV outputs)
+- Quality control plots (variant quality vs depth, heteroplasmy distributions)
+- Heteroplasmy metrics by sex and age
+- Cohort frequency by genomic position
+- Statistical comparisons with automatic t-tests
+
+**Part 2: Gene-Level Analysis** (from VCF and GFF3 files)
+- Heteroplasmy by gene and functional region (CDS, tRNA, rRNA)
+- Gene x Sample heatmaps
+- Most variable genes identification
+- Effect size calculations
+
+**Usage:**
+```bash
+# Run with default settings
+Rscript mity_analysis.R
+
+# Or open in RStudio for interactive analysis
+```
+
+**Requirements:**
+- R packages: `readr`, `dplyr`, `tidyr`, `purrr`, `ggplot2`, `stringr`, `broom`, `scales`, `vcfR`
+- mity pipeline CSV outputs in `species/mity_output/` directories
+- VCF files in `species/mity_chunked/` directories (for gene analysis)
+- GFF3 annotations in `species/ref_mito_*/` directories (for gene analysis)
+- `SampleMetaData.csv` with sample information
+
+**Customization:**
+Edit the `CONFIGURATION` section at the top of the script to:
+- Select which analyses to run (sample-level, gene-level, or both)
+- Choose which plots to generate (8 sample-level + 4 gene-level plot types)
+- Filter to specific species
+- Adjust quality thresholds (TIER, heteroplasmy, VAF)
+
+### status_heteroplasmy_analysis.R
+
+Specialized script for comparing heteroplasmy levels between old and young individuals across species.
+
+**Features:**
+- Old vs Young comparisons using `Status` column from metadata
+- Multiple visualization types:
+  - Violin plots and boxplots for overall comparisons
+  - Species-specific comparisons
+  - Sex x Status interaction plots
+  - Effect size visualizations (Cohen's d)
+- Statistical testing:
+  - Overall comparisons (Wilcoxon or t-test)
+  - Species-specific tests with FDR correction
+  - Sex x Status ANOVA
+- Automatic effect size calculations
+
+**Usage:**
+```bash
+# Run with default settings
+Rscript status_heteroplasmy_analysis.R
+
+# Or open in RStudio for interactive analysis
+```
+
+**Requirements:**
+- R packages: `readr`, `dplyr`, `tidyr`, `purrr`, `ggplot2`, `broom`, `scales`, `stringr`
+- mity pipeline CSV outputs
+- `SampleMetaData.csv` with `Species`, `Sample_ID`, `Sex`, and `Status` columns
+- `Status` column must contain "old" and "young" values
+
+**Customization:**
+Edit the `CONFIGURATION` section at the top to:
+- Adjust quality filters (TIER threshold, heteroplasmy range)
+- Choose which plots to generate (6 plot types available)
+- Select statistical test (Wilcoxon or t-test)
+- Exclude specific species from analysis
+
+**Output:**
+- Interactive plots displayed in console/RStudio
+- Summary statistics printed to console
+- Statistical test results with p-values and effect sizes
+- FDR-corrected results for multiple comparisons
+
 ## Troubleshooting
 
 ### Common Issues
